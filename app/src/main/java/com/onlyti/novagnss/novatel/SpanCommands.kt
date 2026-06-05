@@ -18,6 +18,19 @@ enum class Direction(val label: String, val vx: Double, val vy: Double, val vz: 
 /** Builders for NovAtel SPAN configuration/calibration commands. Verified against OEM7 docs. */
 object SpanCommands {
 
+    /**
+     * Third IMU axis from the other two (right-handed): Z = X × Y. Returns the matching
+     * Direction, or null if X and Y aren't perpendicular (cross product is zero).
+     */
+    fun thirdAxis(x: Direction, y: Direction): Direction? {
+        val zx = x.vy * y.vz - x.vz * y.vy
+        val zy = x.vz * y.vx - x.vx * y.vz
+        val zz = x.vx * y.vy - x.vy * y.vx
+        return Direction.entries.firstOrNull {
+            abs(it.vx - zx) < 1e-6 && abs(it.vy - zy) < 1e-6 && abs(it.vz - zz) < 1e-6
+        }
+    }
+
     private fun fmt(v: Double): String =
         String.format(Locale.US, "%.4f", v).trimEnd('0').trimEnd('.').let { if (it == "-0") "0" else it }
 
@@ -58,6 +71,10 @@ object SpanCommands {
     /** Antenna 1 lever arm: IMU nav-centre -> primary antenna phase centre. Frame IMUBODY/VEHICLE. */
     fun setAnt1Translation(x: Double, y: Double, z: Double, sd: Double = 0.05, frame: String = "IMUBODY"): String =
         "SETINSTRANSLATION ANT1 ${fmt(x)} ${fmt(y)} ${fmt(z)} ${fmt(sd)} ${fmt(sd)} ${fmt(sd)} $frame"
+
+    /** Antenna 2 lever arm (dual-antenna / ALIGN heading): IMU -> secondary antenna phase centre. */
+    fun setAnt2Translation(x: Double, y: Double, z: Double, sd: Double = 0.05, frame: String = "IMUBODY"): String =
+        "SETINSTRANSLATION ANT2 ${fmt(x)} ${fmt(y)} ${fmt(z)} ${fmt(sd)} ${fmt(sd)} ${fmt(sd)} $frame"
 
     /** USER output point: relocates where the INS solution is reported (default enclosure = 0,0,0). */
     fun setUserTranslation(x: Double, y: Double, z: Double, frame: String = "IMUBODY"): String =

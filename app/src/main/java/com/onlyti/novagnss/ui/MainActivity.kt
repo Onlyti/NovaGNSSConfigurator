@@ -31,6 +31,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -270,12 +271,16 @@ private fun ConsoleView(lines: List<String>) {
 private fun ConfigTab(vm: ConsoleViewModel) {
     var imuX by remember { mutableStateOf(Direction.FORWARD) }
     var imuY by remember { mutableStateOf(Direction.LEFT) }
-    var imuZ by remember { mutableStateOf(Direction.UP) }
+    val imuZ = SpanCommands.thirdAxis(imuX, imuY)   // auto: Z = X × Y (right-handed)
     var rbvCmd by remember { mutableStateOf("") }
 
     var ax by remember { mutableStateOf("") }
     var ay by remember { mutableStateOf("") }
     var az by remember { mutableStateOf("") }
+    var bx by remember { mutableStateOf("") }
+    var by_ by remember { mutableStateOf("") }
+    var bz by remember { mutableStateOf("") }
+    var dualAnt by remember { mutableStateOf(false) }
     var ux by remember { mutableStateOf("0") }
     var uy by remember { mutableStateOf("0") }
     var uz by remember { mutableStateOf("0") }
@@ -288,12 +293,21 @@ private fun ConfigTab(vm: ConsoleViewModel) {
             Text("Axis alignment (RBV)", style = MaterialTheme.typography.titleSmall)
             Text("Vehicle frame: X=right, Y=forward, Z=up. Pick where each IMU axis points.",
                 style = MaterialTheme.typography.bodySmall)
+            Text("Pick IMU X & Y; Z is computed automatically.", style = MaterialTheme.typography.bodySmall)
             DirDropdown("IMU X →", imuX) { imuX = it }
             DirDropdown("IMU Y →", imuY) { imuY = it }
-            DirDropdown("IMU Z →", imuZ) { imuZ = it }
-            Button(onClick = {
-                rbvCmd = SpanCommands.rbvFromAxes(imuX, imuY, imuZ) ?: "ERR: axes not orthogonal/right-handed"
-            }) { Text("COMPUTE RBV") }
+            Text(
+                "IMU Z →  ${imuZ?.label ?: "invalid (X and Y must be perpendicular)"}",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (imuZ == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+            )
+            Button(
+                onClick = {
+                    rbvCmd = imuZ?.let { SpanCommands.rbvFromAxes(imuX, imuY, it) }
+                        ?: "ERR: choose perpendicular X and Y"
+                },
+                enabled = imuZ != null,
+            ) { Text("COMPUTE RBV") }
             OutlinedTextField(rbvCmd, { rbvCmd = it }, label = { Text("SETINSROTATION command (review!)") },
                 modifier = Modifier.fillMaxWidth())
             Button(onClick = { vm.send(rbvCmd) }, enabled = rbvCmd.startsWith("SETINSROTATION")) { Text("SEND RBV") }
@@ -305,6 +319,21 @@ private fun ConfigTab(vm: ConsoleViewModel) {
                 style = MaterialTheme.typography.bodySmall)
             Xyz(ax, ay, az, { ax = it }, { ay = it }, { az = it })
             Button(onClick = { vm.send(SpanCommands.setAnt1Translation(d(ax), d(ay), d(az))) }) { Text("SEND ANT1") }
+        } }
+
+        // Dual-antenna (ALIGN heading): secondary antenna lever arm. Optional.
+        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                Text("Secondary antenna ANT2 (dual-antenna)",
+                    style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+                Switch(checked = dualAnt, onCheckedChange = { dualAnt = it })
+            }
+            if (dualAnt) {
+                Text("IMU → 2nd antenna phase centre, IMU body frame (m). For ALIGN heading.",
+                    style = MaterialTheme.typography.bodySmall)
+                Xyz(bx, by_, bz, { bx = it }, { by_ = it }, { bz = it })
+                Button(onClick = { vm.send(SpanCommands.setAnt2Translation(d(bx), d(by_), d(bz))) }) { Text("SEND ANT2") }
+            }
         } }
 
         Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
