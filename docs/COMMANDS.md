@@ -1,5 +1,9 @@
 # NovAtel OEM7 / PwrPak7 명령 분류 + 앱 설계
 
+**스코프: NovA = 수신기 설정 전용. 폰이 보정을 라우팅하지 않음(그건 rtk-router 몫, 사용 여부는
+사용자 결정).** NTRIPCONFIG/WIFINETCONFIG 는 "수신기가 WiFi 로 자체 RTK 하도록 설정"하는 것 —
+앱이 RTK 를 수행하는 게 아니라 수신기 설정값을 넣는 것이라 포함.
+
 검증: docs.novatel.com (OEM7 Commands/Logs). 작성 2026-06-05. 구현 전 설계 문서.
 syntax 는 abbreviated-ASCII. [?] = 매뉴얼 미확인(구현 전 재검증 필요, 일단 제외).
 

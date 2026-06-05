@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -48,10 +49,12 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.onlyti.novagnss.novatel.Direction
 import com.onlyti.novagnss.novatel.NovatelLog
+import com.onlyti.novagnss.novatel.OemCommands
 import com.onlyti.novagnss.novatel.SatVis
 import com.onlyti.novagnss.novatel.SpanCommands
 import kotlin.math.cos
@@ -266,88 +269,246 @@ private fun ConsoleView(lines: List<String>) {
 
 // ---------------- Config (SPAN) ----------------
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 private fun ConfigTab(vm: ConsoleViewModel) {
+    var cat by remember { mutableStateOf("Info") }
+    val cats = listOf("Info", "Ports", "Network", "NTRIP", "RTK", "GNSS", "SPAN", "System")
+    Column(
+        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            cats.forEach { FilterChip(cat == it, { cat = it }, label = { Text(it) }) }
+        }
+        Text("config 명령은 SAVECONFIG 해야 영구 저장. 응답은 Terminal 콘솔에 표시.",
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        when (cat) {
+            "Info" -> InfoSection(vm)
+            "Ports" -> PortsSection(vm)
+            "Network" -> NetworkSection(vm)
+            "NTRIP" -> NtripSection(vm)
+            "RTK" -> RtkSection(vm)
+            "GNSS" -> GnssSection(vm)
+            "SPAN" -> SpanSection(vm)
+            else -> SystemSection(vm)
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun InfoSection(vm: ConsoleViewModel) = Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Text("Info (LOG ... ONCE → Terminal 콘솔)", style = MaterialTheme.typography.titleSmall)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        for ((label, cmd) in OemCommands.INFO_LOGS) {
+            OutlinedButton(onClick = { vm.send(cmd) }) { Text(label) }
+        }
+    }
+} }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PortsSection(vm: ConsoleViewModel) {
+    var scPort by remember { mutableStateOf("COM1") }
+    var scBaud by remember { mutableStateOf(115200) }
+    var imPort by remember { mutableStateOf("COM1") }
+    var rx by remember { mutableStateOf("RTCMV3") }
+    var tx by remember { mutableStateOf("NOVATEL") }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("SERIALCONFIG (baud)", style = MaterialTheme.typography.titleSmall)
+        Text("같은 포트엔 SERIALCONFIG 를 INTERFACEMODE 보다 먼저!", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+        StrDropdown("port", OemCommands.PORTS, scPort) { scPort = it }
+        StrDropdown("baud", OemCommands.BAUDS.map { "$it" }, "$scBaud") { scBaud = it.toInt() }
+        Button(onClick = { vm.send(OemCommands.serialConfig(scPort, scBaud)) }) { Text("SEND SERIALCONFIG") }
+    } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("INTERFACEMODE (rx/tx type)", style = MaterialTheme.typography.titleSmall)
+        StrDropdown("port", OemCommands.PORTS, imPort) { imPort = it }
+        StrDropdown("rx (입력 해석)", OemCommands.RXTYPES, rx) { rx = it }
+        StrDropdown("tx (출력)", OemCommands.RXTYPES, tx) { tx = it }
+        Button(onClick = { vm.send(OemCommands.interfaceMode(imPort, rx, tx)) }) { Text("SEND INTERFACEMODE") }
+    } }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NetworkSection(vm: ConsoleViewModel) {
+    var mode by remember { mutableStateOf("CLIENT") }
+    var ssid by remember { mutableStateOf("") }
+    var pw by remember { mutableStateOf("") }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("WiFi (PwrPak7)", style = MaterialTheme.typography.titleSmall)
+        StrDropdown("WIFIMODE", OemCommands.WIFI_MODES, mode) { mode = it }
+        Button(onClick = { vm.send(OemCommands.wifiMode(mode)) }) { Text("SEND WIFIMODE") }
+        OutlinedTextField(ssid, { ssid = it }, label = { Text("SSID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(pw, { pw = it }, label = { Text("passkey") }, singleLine = true,
+            visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        Button(onClick = { vm.send(OemCommands.wifiNetConfig(1, ssid.trim(), pw.trim())) }, enabled = ssid.isNotBlank()) { Text("SEND WIFINETCONFIG") }
+        Button(onClick = { vm.send(OemCommands.ipConfigDhcp()) }) { Text("IPCONFIG ETHA DHCP") }
+    } }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun NtripSection(vm: ConsoleViewModel) {
+    var ncom by remember { mutableStateOf("NCOM1") }
+    var host by remember { mutableStateOf("") }
+    var mount by remember { mutableStateOf("") }
+    var user by remember { mutableStateOf("") }
+    var pass by remember { mutableStateOf("") }
+    var v2 by remember { mutableStateOf(true) }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("수신기 NTRIP 클라이언트 (자가 RTK 설정)", style = MaterialTheme.typography.titleSmall)
+        Text("수신기가 직접 caster 접속. 폰 라우팅 아님.", style = MaterialTheme.typography.bodySmall)
+        StrDropdown("NCOM port", OemCommands.NCOM_PORTS, ncom) { ncom = it }
+        OutlinedTextField(host, { host = it }, label = { Text("host:port") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(mount, { mount = it }, label = { Text("mountpoint") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(user, { user = it }, label = { Text("user") }, singleLine = true, modifier = Modifier.weight(1f))
+            OutlinedTextField(pass, { pass = it }, label = { Text("pass") }, singleLine = true,
+                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.weight(1f))
+        }
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("NTRIP v2", modifier = Modifier.weight(1f)); Switch(checked = v2, onCheckedChange = { v2 = it })
+        }
+        Button(onClick = {
+            vm.send(OemCommands.ntripConfigClient(ncom, host.trim(), mount.trim(), user.trim(), pass.trim(), v2))
+            vm.send(OemCommands.useNcomForRtk(ncom))
+        }, enabled = host.isNotBlank()) { Text("APPLY (NTRIPCONFIG + RTK 입력)") }
+        OutlinedButton(onClick = { vm.send(OemCommands.ntripSourcetable(host.trim())) }, enabled = host.isNotBlank()) { Text("SOURCETABLE 조회") }
+    } }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RtkSection(vm: ConsoleViewModel) {
+    var src by remember { mutableStateOf("AUTO") }
+    var dyn by remember { mutableStateOf("AUTO") }
+    var timeout by remember { mutableStateOf("60") }
+    var mask by remember { mutableStateOf("5") }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("RTK tuning", style = MaterialTheme.typography.titleSmall)
+        StrDropdown("RTKSOURCE", OemCommands.RTK_SOURCES, src) { src = it }
+        Button(onClick = { vm.send(OemCommands.rtkSource(src)) }) { Text("SEND RTKSOURCE") }
+        StrDropdown("RTKDYNAMICS", OemCommands.RTK_DYNAMICS, dyn) { dyn = it }
+        Button(onClick = { vm.send(OemCommands.rtkDynamics(dyn)) }) { Text("SEND RTKDYNAMICS") }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(timeout, { timeout = it }, label = { Text("RTKTIMEOUT 5-60s") }, singleLine = true, modifier = Modifier.weight(1f))
+            Button(onClick = { vm.send(OemCommands.rtkTimeout(timeout.toIntOrNull() ?: 60)) }) { Text("SEND") }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(mask, { mask = it }, label = { Text("ECUTOFF deg") }, singleLine = true, modifier = Modifier.weight(1f))
+            Button(onClick = { vm.send(OemCommands.ecutoff(mask.toDoubleOrNull() ?: 5.0)) }) { Text("SEND") }
+        }
+    } }
+}
+
+@Composable
+private fun GnssSection(vm: ConsoleViewModel) = Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Text("GNSS constellations (ASSIGNALL)", style = MaterialTheme.typography.titleSmall)
+    for (sys in OemCommands.CONSTELLATIONS) {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(sys, modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { vm.send(OemCommands.assignAll(sys, true)) }) { Text("on") }
+            OutlinedButton(onClick = { vm.send(OemCommands.assignAll(sys, false)) }) { Text("off") }
+        }
+    }
+} }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpanSection(vm: ConsoleViewModel) {
     var imuX by remember { mutableStateOf(Direction.FORWARD) }
     var imuY by remember { mutableStateOf(Direction.LEFT) }
-    val imuZ = SpanCommands.thirdAxis(imuX, imuY)   // auto: Z = X × Y (right-handed)
+    val imuZ = SpanCommands.thirdAxis(imuX, imuY)
     var rbvCmd by remember { mutableStateOf("") }
-
-    var ax by remember { mutableStateOf("") }
-    var ay by remember { mutableStateOf("") }
-    var az by remember { mutableStateOf("") }
-    var bx by remember { mutableStateOf("") }
-    var by_ by remember { mutableStateOf("") }
-    var bz by remember { mutableStateOf("") }
+    var ax by remember { mutableStateOf("") }; var ay by remember { mutableStateOf("") }; var az by remember { mutableStateOf("") }
+    var bx by remember { mutableStateOf("") }; var by_ by remember { mutableStateOf("") }; var bz by remember { mutableStateOf("") }
     var dualAnt by remember { mutableStateOf(false) }
-    var ux by remember { mutableStateOf("0") }
-    var uy by remember { mutableStateOf("0") }
-    var uz by remember { mutableStateOf("0") }
+    var ux by remember { mutableStateOf("0") }; var uy by remember { mutableStateOf("0") }; var uz by remember { mutableStateOf("0") }
+    var profile by remember { mutableStateOf("LAND") }
+    var align by remember { mutableStateOf("AUTOMATIC") }
 
-    Column(
-        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Axis alignment (RBV)", style = MaterialTheme.typography.titleSmall)
-            Text("Vehicle frame: X=right, Y=forward, Z=up. Pick where each IMU axis points.",
-                style = MaterialTheme.typography.bodySmall)
-            Text("Pick IMU X & Y; Z is computed automatically.", style = MaterialTheme.typography.bodySmall)
-            DirDropdown("IMU X →", imuX) { imuX = it }
-            DirDropdown("IMU Y →", imuY) { imuY = it }
-            Text(
-                "IMU Z →  ${imuZ?.label ?: "invalid (X and Y must be perpendicular)"}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (imuZ == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
-            )
-            Button(
-                onClick = {
-                    rbvCmd = imuZ?.let { SpanCommands.rbvFromAxes(imuX, imuY, it) }
-                        ?: "ERR: choose perpendicular X and Y"
-                },
-                enabled = imuZ != null,
-            ) { Text("COMPUTE RBV") }
-            OutlinedTextField(rbvCmd, { rbvCmd = it }, label = { Text("SETINSROTATION command (review!)") },
-                modifier = Modifier.fillMaxWidth())
-            Button(onClick = { vm.send(rbvCmd) }, enabled = rbvCmd.startsWith("SETINSROTATION")) { Text("SEND RBV") }
-        } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Axis alignment (RBV)", style = MaterialTheme.typography.titleSmall)
+        Text("Vehicle frame X=right/Y=forward/Z=up. Pick IMU X & Y; Z auto.", style = MaterialTheme.typography.bodySmall)
+        DirDropdown("IMU X →", imuX) { imuX = it }
+        DirDropdown("IMU Y →", imuY) { imuY = it }
+        Text("IMU Z →  ${imuZ?.label ?: "invalid (X⊥Y required)"}",
+            color = if (imuZ == null) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+        Button(onClick = { rbvCmd = imuZ?.let { SpanCommands.rbvFromAxes(imuX, imuY, it) } ?: "ERR" }, enabled = imuZ != null) { Text("COMPUTE RBV") }
+        OutlinedTextField(rbvCmd, { rbvCmd = it }, label = { Text("SETINSROTATION (review!)") }, modifier = Modifier.fillMaxWidth())
+        Button(onClick = { vm.send(rbvCmd) }, enabled = rbvCmd.startsWith("SETINSROTATION")) { Text("SEND RBV") }
+    } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Antenna lever arm ANT1", style = MaterialTheme.typography.titleSmall)
+        Xyz(ax, ay, az, { ax = it }, { ay = it }, { az = it })
+        Button(onClick = { vm.send(SpanCommands.setAnt1Translation(d(ax), d(ay), d(az))) }) { Text("SEND ANT1") }
+    } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("ANT2 (dual-antenna)", style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
+            Switch(checked = dualAnt, onCheckedChange = { dualAnt = it })
+        }
+        if (dualAnt) {
+            Xyz(bx, by_, bz, { bx = it }, { by_ = it }, { bz = it })
+            Button(onClick = { vm.send(SpanCommands.setAnt2Translation(d(bx), d(by_), d(bz))) }) { Text("SEND ANT2") }
+        }
+    } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Output point USER (기본 enclosure 0,0,0)", style = MaterialTheme.typography.titleSmall)
+        Xyz(ux, uy, uz, { ux = it }, { uy = it }, { uz = it })
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { vm.send(SpanCommands.setUserTranslation(d(ux), d(uy), d(uz))) }) { Text("SEND USER") }
+            OutlinedButton(onClick = { ux = "0"; uy = "0"; uz = "0" }) { Text("0,0,0") }
+        }
+    } }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Text("Profile / Alignment", style = MaterialTheme.typography.titleSmall)
+        StrDropdown("SETINSPROFILE", OemCommands.INS_PROFILES, profile) { profile = it }
+        Button(onClick = { vm.send(OemCommands.setInsProfile(profile)) }) { Text("SEND PROFILE") }
+        StrDropdown("ALIGNMENTMODE", OemCommands.ALIGN_MODES, align) { align = it }
+        Button(onClick = { vm.send(OemCommands.alignmentMode(align)) }) { Text("SEND ALIGNMENT") }
+    } }
+}
 
-        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("GNSS antenna lever arm (SETINSTRANSLATION ANT1)", style = MaterialTheme.typography.titleSmall)
-            Text("IMU nav-centre → antenna phase centre, IMU body frame (m).",
-                style = MaterialTheme.typography.bodySmall)
-            Xyz(ax, ay, az, { ax = it }, { ay = it }, { az = it })
-            Button(onClick = { vm.send(SpanCommands.setAnt1Translation(d(ax), d(ay), d(az))) }) { Text("SEND ANT1") }
-        } }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SystemSection(vm: ConsoleViewModel) {
+    var fresetTarget by remember { mutableStateOf("STANDARD") }
+    var confirmFreset by remember { mutableStateOf(false) }
+    Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("System", style = MaterialTheme.typography.titleSmall)
+        Button(onClick = { vm.send(OemCommands.saveConfig()) }, modifier = Modifier.fillMaxWidth()) { Text("SAVECONFIG (영구 저장)") }
+        OutlinedButton(onClick = { vm.send(OemCommands.unlogall()) }, modifier = Modifier.fillMaxWidth()) { Text("UNLOGALL") }
+        StrDropdown("FRESET target", OemCommands.FRESET_TARGETS, fresetTarget) { fresetTarget = it }
+        OutlinedButton(onClick = { confirmFreset = true }, modifier = Modifier.fillMaxWidth()) { Text("FRESET (공장초기화)") }
+    } }
+    if (confirmFreset) {
+        AlertDialog(
+            onDismissRequest = { confirmFreset = false },
+            title = { Text("FRESET $fresetTarget?") },
+            text = { Text("수신기 설정이 초기화됩니다. 계속?") },
+            confirmButton = { TextButton(onClick = { vm.send(OemCommands.freset(fresetTarget)); confirmFreset = false }) { Text("FRESET") } },
+            dismissButton = { TextButton(onClick = { confirmFreset = false }) { Text("취소") } },
+        )
+    }
+}
 
-        // Dual-antenna (ALIGN heading): secondary antenna lever arm. Optional.
-        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text("Secondary antenna ANT2 (dual-antenna)",
-                    style = MaterialTheme.typography.titleSmall, modifier = Modifier.weight(1f))
-                Switch(checked = dualAnt, onCheckedChange = { dualAnt = it })
-            }
-            if (dualAnt) {
-                Text("IMU → 2nd antenna phase centre, IMU body frame (m). For ALIGN heading.",
-                    style = MaterialTheme.typography.bodySmall)
-                Xyz(bx, by_, bz, { bx = it }, { by_ = it }, { bz = it })
-                Button(onClick = { vm.send(SpanCommands.setAnt2Translation(d(bx), d(by_), d(bz))) }) { Text("SEND ANT2") }
-            }
-        } }
-
-        Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Text("Output position (SETINSTRANSLATION USER)", style = MaterialTheme.typography.titleSmall)
-            Text("Where the INS solution is reported. Default = enclosure (0,0,0).",
-                style = MaterialTheme.typography.bodySmall)
-            Xyz(ux, uy, uz, { ux = it }, { uy = it }, { uz = it })
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { vm.send(SpanCommands.setUserTranslation(d(ux), d(uy), d(uz))) }) { Text("SEND USER") }
-                OutlinedButton(onClick = { ux = "0"; uy = "0"; uz = "0" }) { Text("enclosure 0,0,0") }
-            }
-        } }
-
-        Button(onClick = { vm.send(SpanCommands.saveConfig()) }) { Text("SAVECONFIG") }
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun StrDropdown(label: String, options: List<String>, selected: String, onSelect: (String) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+        OutlinedTextField(
+            value = selected, onValueChange = {}, readOnly = true, label = { Text(label) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
+            modifier = Modifier.menuAnchor().fillMaxWidth(),
+        )
+        ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            for (o in options) DropdownMenuItem(text = { Text(o) }, onClick = { onSelect(o); expanded = false })
+        }
     }
 }
 
