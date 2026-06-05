@@ -23,7 +23,7 @@ class SerialLink(
     private val context: Context,
     private val baud: Int,
     private val portIndex: Int,
-    private val onConnected: (deviceName: String, portCount: Int) -> Unit,
+    private val onConnected: (deviceName: String, portCount: Int, port: Int) -> Unit,
     private val onDisconnected: (reason: String) -> Unit,
     private val onData: (ByteArray) -> Unit,
 ) {
@@ -78,7 +78,9 @@ class SerialLink(
             val connection = usbManager.openDevice(driver.device)
                 ?: run { onDisconnected("openDevice failed"); return }
             val portCount = driver.ports.size
-            val idx = portIndex.coerceIn(0, portCount - 1)
+            // portIndex < 0 => auto-detect the responding CDC port (NovAtel exposes several).
+            val idx = if (portIndex < 0) probePorts(driver, connection).coerceIn(0, portCount - 1)
+                      else portIndex.coerceIn(0, portCount - 1)
             val p = driver.ports[idx]
             p.open(connection)
             p.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
@@ -98,10 +100,45 @@ class SerialLink(
 
             val name = driver.device.productName ?: driver.javaClass.simpleName
             Log.d(TAG, "serial open: driver=${driver.javaClass.simpleName} device=$name port=$idx/$portCount baud=$baud")
-            onConnected(name, portCount)
+            onConnected(name, portCount, idx)
         } catch (t: Throwable) {
             onDisconnected("open failed: ${t.message}")
         }
+    }
+
+    /**
+     * Probe each CDC port with a NovAtel command and return the index that responds.
+     * Score: 2 = returns a VERSION reply, 1 = any data, 0 = silent. Picks the best.
+     */
+    private fun probePorts(driver: com.hoho.android.usbserial.driver.UsbSerialDriver, connection: android.hardware.usb.UsbDeviceConnection): Int {
+        var best = 0
+        var bestScore = -1
+        for (i in driver.ports.indices) {
+            val p = driver.ports[i]
+            var score = 0
+            try {
+                p.open(connection)
+                p.setParameters(baud, 8, UsbSerialPort.STOPBITS_1, UsbSerialPort.PARITY_NONE)
+                p.write("\r\nLOG VERSIONA ONCE\r\n".toByteArray(Charsets.US_ASCII), 500)
+                val buf = ByteArray(2048)
+                val sb = StringBuilder()
+                val deadline = System.currentTimeMillis() + PROBE_MS
+                while (System.currentTimeMillis() < deadline) {
+                    val n = try { p.read(buf, 250) } catch (_: Throwable) { 0 }
+                    if (n > 0) sb.append(String(buf, 0, n, Charsets.US_ASCII))
+                    if (sb.contains("VERSION")) break
+                }
+                score = if (sb.contains("VERSION")) 2 else if (sb.isNotEmpty()) 1 else 0
+                Log.d(TAG, "probe port $i: score=$score (${sb.length}B)")
+            } catch (_: Throwable) {
+            } finally {
+                try { p.close() } catch (_: Throwable) {}
+            }
+            if (score > bestScore) { bestScore = score; best = i }
+            if (bestScore >= 2) break
+        }
+        Log.d(TAG, "auto-detect -> port $best")
+        return best
     }
 
     /** Write raw bytes to the receiver. */
@@ -133,5 +170,6 @@ class SerialLink(
         private const val TAG = "novatel"
         private const val ACTION_USB_PERMISSION = "com.onlyti.novagnss.USB_PERMISSION"
         private const val WRITE_TIMEOUT_MS = 2000
+        private const val PROBE_MS = 1300L   // per-port auto-detect listen window
     }
 }

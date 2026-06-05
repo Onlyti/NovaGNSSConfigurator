@@ -58,26 +58,29 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
     fun startCalStatus() = send(SpanCommands.logInsCalStatus(), echo = false)
 
     val baud get() = prefs.baud
-    val portIndex get() = prefs.portIndex
+    private val _portIndex = MutableStateFlow(prefs.portIndex)   // -1 = auto-detect
+    val portIndex: StateFlow<Int> = _portIndex
     fun setBaud(v: Int) { prefs.baud = v; refreshStatusDetail() }
-    fun setPortIndex(v: Int) { prefs.portIndex = v; refreshStatusDetail() }
+    fun setPortIndex(v: Int) { prefs.portIndex = v; _portIndex.value = v; refreshStatusDetail() }
+
+    private fun portLabel(p: Int) = if (p < 0) "auto" else "$p"
 
     private fun refreshStatusDetail() {
         if (!_status.value.connected) {
-            _status.value = _status.value.copy(detail = "baud ${prefs.baud}, port ${prefs.portIndex}")
+            _status.value = _status.value.copy(detail = "baud ${prefs.baud}, port ${portLabel(prefs.portIndex)}")
         }
     }
 
     fun connect() {
         if (serial != null) return
-        appendLine("# connecting (baud ${prefs.baud}, port ${prefs.portIndex})...")
+        appendLine("# connecting (baud ${prefs.baud}, port ${portLabel(prefs.portIndex)})...")
         serial = SerialLink(
             context = getApplication<Application>().applicationContext,
             baud = prefs.baud,
             portIndex = prefs.portIndex,
-            onConnected = { name, ports ->
-                _status.value = ConsoleStatus(true, name, ports, detail = "connected: $name")
-                appendLine("# connected: $name ($ports port(s))")
+            onConnected = { name, ports, port ->
+                _status.value = ConsoleStatus(true, name, ports, detail = "connected: $name (port $port/$ports)")
+                appendLine("# connected: $name — using port $port of $ports")
             },
             onDisconnected = { reason ->
                 _status.value = _status.value.copy(connected = false, detail = reason)

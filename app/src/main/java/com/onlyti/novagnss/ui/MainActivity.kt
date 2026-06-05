@@ -200,7 +200,7 @@ private fun TerminalTab(vm: ConsoleViewModel) {
     var newLabel by remember { mutableStateOf("") }
     var newCmd by remember { mutableStateOf("") }
     var baudSel by remember { mutableStateOf(vm.baud) }
-    var portSel by remember { mutableStateOf(vm.portIndex) }
+    val portSel by vm.portIndex.collectAsState()
 
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
@@ -212,9 +212,10 @@ private fun TerminalTab(vm: ConsoleViewModel) {
                 FilterChip(baudSel == b, { baudSel = b; vm.setBaud(b) }, label = { Text("$b") })
             }
         }
-        Text("USB port", style = MaterialTheme.typography.labelLarge)
+        Text("USB port (auto = detect NovAtel CDC port)", style = MaterialTheme.typography.labelLarge)
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            for (p in 0..2) FilterChip(portSel == p, { portSel = p; vm.setPortIndex(p) }, label = { Text("$p") })
+            FilterChip(portSel == -1, { vm.setPortIndex(-1) }, label = { Text("auto") })
+            for (p in 0..2) FilterChip(portSel == p, { vm.setPortIndex(p) }, label = { Text("$p") })
         }
 
         Text("Commands (tap=send, long-press=remove)", style = MaterialTheme.typography.labelLarge)

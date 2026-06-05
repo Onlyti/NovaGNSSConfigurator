@@ -16,7 +16,7 @@ class Prefs(context: Context) {
         set(v) { sp.edit().putInt(KEY_BAUD, v).apply() }
 
     var portIndex: Int
-        get() = sp.getInt(KEY_PORT, 0)
+        get() = sp.getInt(KEY_PORT, -1)   // -1 = auto-detect (NovAtel multi-port)
         set(v) { sp.edit().putInt(KEY_PORT, v).apply() }
 
     fun loadCommands(): List<NovCommand> {
