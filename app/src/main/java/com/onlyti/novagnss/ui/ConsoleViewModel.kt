@@ -3,6 +3,11 @@ package com.onlyti.novagnss.ui
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.onlyti.novagnss.config.NovCommand
+import com.onlyti.novagnss.novatel.BestPos
+import com.onlyti.novagnss.novatel.InsPvax
+import com.onlyti.novagnss.novatel.NovatelLog
+import com.onlyti.novagnss.novatel.SatVis
+import com.onlyti.novagnss.novatel.SpanCommands
 import com.onlyti.novagnss.serial.SerialLink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +41,21 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _commands = MutableStateFlow(prefs.loadCommands())
     val commands: StateFlow<List<NovCommand>> = _commands
+
+    // --- structured NovAtel state for the Status tab ---
+    private val _insPvax = MutableStateFlow<InsPvax?>(null)
+    val insPvax: StateFlow<InsPvax?> = _insPvax
+    private val _bestPos = MutableStateFlow<BestPos?>(null)
+    val bestPos: StateFlow<BestPos?> = _bestPos
+    private val satsBySystem = LinkedHashMap<String, List<SatVis>>()
+    private val _sats = MutableStateFlow<List<SatVis>>(emptyList())
+    val sats: StateFlow<List<SatVis>> = _sats
+    private val _calStatus = MutableStateFlow("")
+    val calStatus: StateFlow<String> = _calStatus
+
+    fun startStatusLogs() = SpanCommands.STATUS_LOGS.forEach { send(it, echo = false) }
+    fun stopStatusLogs() = SpanCommands.STATUS_LOGS_STOP.forEach { send(it, echo = false) }
+    fun startCalStatus() = send(SpanCommands.logInsCalStatus(), echo = false)
 
     val baud get() = prefs.baud
     val portIndex get() = prefs.portIndex
@@ -75,14 +95,14 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
         appendLine("# disconnected")
     }
 
-    /** Send a command line (CRLF-terminated) and echo it to the console. */
-    fun send(cmd: String) {
+    /** Send a command line (CRLF-terminated). [echo]=false for background log subscriptions. */
+    fun send(cmd: String, echo: Boolean = true) {
         val c = cmd.trim()
         if (c.isEmpty()) return
         val s = serial
-        if (s == null) { appendLine("# not connected"); return }
+        if (s == null) { if (echo) appendLine("# not connected"); return }
         s.write((c + "\r\n").toByteArray(Charsets.US_ASCII))
-        appendLine("> $c")
+        if (echo) appendLine("> $c")
         bumpCounters()
     }
 
@@ -113,11 +133,28 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
             while (nl >= 0) {
                 val line = rxBuf.substring(0, nl).trimEnd('\r')
                 rxBuf.delete(0, nl + 1)
-                if (line.isNotEmpty()) appendLine(line)
+                if (line.isNotEmpty()) { appendLine(line); parseLog(line) }
                 nl = rxBuf.indexOf("\n")
             }
         }
         bumpCounters()
+    }
+
+    /** Feed a complete line to the NovAtel parsers and update structured Status state. */
+    private fun parseLog(line: String) {
+        val (name, f) = NovatelLog.split(line) ?: return
+        when (name) {
+            "INSPVAX" -> NovatelLog.parseInspvax(f)?.let { _insPvax.value = it }
+            "BESTPOS" -> NovatelLog.parseBestpos(f)?.let { _bestPos.value = it }
+            "SATVIS2" -> {
+                val sats = NovatelLog.parseSatvis2(f)
+                if (sats.isNotEmpty()) {
+                    satsBySystem[sats.first().system] = sats
+                    _sats.value = satsBySystem.values.flatten()
+                }
+            }
+            "INSCALSTATUS" -> _calStatus.value = f.joinToString(", ")
+        }
     }
 
     private fun bumpCounters() {
