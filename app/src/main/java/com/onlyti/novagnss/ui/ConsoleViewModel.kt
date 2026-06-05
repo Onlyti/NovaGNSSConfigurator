@@ -2,15 +2,20 @@ package com.onlyti.novagnss.ui
 
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
 import com.onlyti.novagnss.config.NovCommand
 import com.onlyti.novagnss.novatel.BestPos
 import com.onlyti.novagnss.novatel.InsPvax
 import com.onlyti.novagnss.novatel.NovatelLog
+import com.onlyti.novagnss.novatel.RxConfig
 import com.onlyti.novagnss.novatel.SatVis
 import com.onlyti.novagnss.novatel.SpanCommands
+import com.onlyti.novagnss.novatel.parseRxConfig
 import com.onlyti.novagnss.serial.SerialLink
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 
 data class ConsoleStatus(
     val connected: Boolean = false,
@@ -52,6 +57,26 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
     val sats: StateFlow<List<SatVis>> = _sats
     private val _calStatus = MutableStateFlow("")
     val calStatus: StateFlow<String> = _calStatus
+
+    // --- current receiver config (read from LOG RXCONFIG) ---
+    private val _rxConfig = MutableStateFlow(RxConfig())
+    val rxConfig: StateFlow<RxConfig> = _rxConfig
+    @Volatile private var capturing = false
+    private val capBuf = StringBuilder()
+
+    /** Read the receiver's current config: LOG RXCONFIG, capture ~1.6s, parse -> rxConfig. */
+    fun readRxConfig() {
+        if (serial == null) return
+        synchronized(capBuf) { capBuf.setLength(0) }
+        capturing = true
+        send("LOG RXCONFIGA ONCE", echo = false)
+        viewModelScope.launch {
+            delay(1600)
+            capturing = false
+            val text = synchronized(capBuf) { capBuf.toString() }
+            if (text.isNotBlank()) _rxConfig.value = parseRxConfig(text)
+        }
+    }
 
     fun startStatusLogs() = SpanCommands.STATUS_LOGS.forEach { send(it, echo = false) }
     fun stopStatusLogs() = SpanCommands.STATUS_LOGS_STOP.forEach { send(it, echo = false) }
@@ -136,7 +161,10 @@ class ConsoleViewModel(app: Application) : AndroidViewModel(app) {
             while (nl >= 0) {
                 val line = rxBuf.substring(0, nl).trimEnd('\r')
                 rxBuf.delete(0, nl + 1)
-                if (line.isNotEmpty()) { appendLine(line); parseLog(line) }
+                if (line.isNotEmpty()) {
+                    appendLine(line); parseLog(line)
+                    if (capturing) synchronized(capBuf) { capBuf.append(line).append('\n') }
+                }
                 nl = rxBuf.indexOf("\n")
             }
         }

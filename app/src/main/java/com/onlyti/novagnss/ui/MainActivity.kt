@@ -274,6 +274,11 @@ private fun ConsoleView(lines: List<String>) {
 private fun ConfigTab(vm: ConsoleViewModel) {
     var cat by remember { mutableStateOf("Info") }
     val cats = listOf("Info", "Ports", "Network", "NTRIP", "RTK", "GNSS", "SPAN", "System")
+    val connected by vm.status.collectAsState()
+    // Auto-read the receiver's current config when entering a category.
+    androidx.compose.runtime.LaunchedEffect(cat, connected.connected) {
+        if (connected.connected && cat != "Info") vm.readRxConfig()
+    }
     Column(
         modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp),
@@ -281,8 +286,12 @@ private fun ConfigTab(vm: ConsoleViewModel) {
         FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             cats.forEach { FilterChip(cat == it, { cat = it }, label = { Text(it) }) }
         }
-        Text("config 명령은 SAVECONFIG 해야 영구 저장. 응답은 Terminal 콘솔에 표시.",
-            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline)
+        Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+            Text("현재값 자동 읽음(RXCONFIG). SET 후 SAVECONFIG 필요.",
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.outline,
+                modifier = Modifier.weight(1f))
+            OutlinedButton(onClick = { vm.readRxConfig() }, enabled = connected.connected) { Text("↻ read") }
+        }
         when (cat) {
             "Info" -> InfoSection(vm)
             "Ports" -> PortsSection(vm)
@@ -310,11 +319,12 @@ private fun InfoSection(vm: ConsoleViewModel) = Card { Column(Modifier.padding(1
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PortsSection(vm: ConsoleViewModel) {
+    val rxc by vm.rxConfig.collectAsState()
     var scPort by remember { mutableStateOf("COM1") }
-    var scBaud by remember { mutableStateOf(115200) }
+    var scBaud by remember(rxc, scPort) { mutableStateOf(rxc.serial[scPort] ?: 115200) }
     var imPort by remember { mutableStateOf("COM1") }
-    var rx by remember { mutableStateOf("RTCMV3") }
-    var tx by remember { mutableStateOf("NOVATEL") }
+    var rx by remember(rxc, imPort) { mutableStateOf(rxc.iface[imPort]?.first ?: "RTCMV3") }
+    var tx by remember(rxc, imPort) { mutableStateOf(rxc.iface[imPort]?.second ?: "NOVATEL") }
     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("SERIALCONFIG (baud)", style = MaterialTheme.typography.titleSmall)
         Text("같은 포트엔 SERIALCONFIG 를 INTERFACEMODE 보다 먼저!", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -334,9 +344,10 @@ private fun PortsSection(vm: ConsoleViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NetworkSection(vm: ConsoleViewModel) {
-    var mode by remember { mutableStateOf("CLIENT") }
-    var ssid by remember { mutableStateOf("") }
-    var pw by remember { mutableStateOf("") }
+    val rxc by vm.rxConfig.collectAsState()
+    var mode by remember(rxc) { mutableStateOf(rxc.wifiMode.ifBlank { "CLIENT" }) }
+    var ssid by remember(rxc) { mutableStateOf(rxc.wifiSsid) }
+    var pw by remember { mutableStateOf("") }   // password masked by receiver — not read back
     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("WiFi (PwrPak7)", style = MaterialTheme.typography.titleSmall)
         StrDropdown("WIFIMODE", OemCommands.WIFI_MODES, mode) { mode = it }
@@ -352,12 +363,13 @@ private fun NetworkSection(vm: ConsoleViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun NtripSection(vm: ConsoleViewModel) {
-    var ncom by remember { mutableStateOf("NCOM1") }
-    var host by remember { mutableStateOf("") }
-    var mount by remember { mutableStateOf("") }
-    var user by remember { mutableStateOf("") }
-    var pass by remember { mutableStateOf("") }
-    var v2 by remember { mutableStateOf(true) }
+    val rxc by vm.rxConfig.collectAsState()
+    var ncom by remember(rxc) { mutableStateOf(rxc.ntripNcom.ifBlank { "NCOM1" }) }
+    var host by remember(rxc) { mutableStateOf(rxc.ntripHost) }
+    var mount by remember(rxc) { mutableStateOf(rxc.ntripMount) }
+    var user by remember(rxc) { mutableStateOf(rxc.ntripUser) }
+    var pass by remember { mutableStateOf("") }   // masked — not read back
+    var v2 by remember(rxc) { mutableStateOf(rxc.ntripV2) }
     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("수신기 NTRIP 클라이언트 (자가 RTK 설정)", style = MaterialTheme.typography.titleSmall)
         Text("수신기가 직접 caster 접속. 폰 라우팅 아님.", style = MaterialTheme.typography.bodySmall)
@@ -383,10 +395,11 @@ private fun NtripSection(vm: ConsoleViewModel) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RtkSection(vm: ConsoleViewModel) {
-    var src by remember { mutableStateOf("AUTO") }
-    var dyn by remember { mutableStateOf("AUTO") }
-    var timeout by remember { mutableStateOf("60") }
-    var mask by remember { mutableStateOf("5") }
+    val rxc by vm.rxConfig.collectAsState()
+    var src by remember(rxc) { mutableStateOf(rxc.rtkSource.ifBlank { "AUTO" }) }
+    var dyn by remember(rxc) { mutableStateOf(rxc.rtkDynamics.ifBlank { "AUTO" }) }
+    var timeout by remember(rxc) { mutableStateOf(rxc.rtkTimeout.ifBlank { "60" }) }
+    var mask by remember(rxc) { mutableStateOf(rxc.ecutoff.ifBlank { "5" }) }
     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("RTK tuning", style = MaterialTheme.typography.titleSmall)
         StrDropdown("RTKSOURCE", OemCommands.RTK_SOURCES, src) { src = it }
@@ -419,16 +432,23 @@ private fun GnssSection(vm: ConsoleViewModel) = Card { Column(Modifier.padding(1
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun SpanSection(vm: ConsoleViewModel) {
+    val rxc by vm.rxConfig.collectAsState()
     var imuX by remember { mutableStateOf(Direction.FORWARD) }
     var imuY by remember { mutableStateOf(Direction.LEFT) }
     val imuZ = SpanCommands.thirdAxis(imuX, imuY)
     var rbvCmd by remember { mutableStateOf("") }
-    var ax by remember { mutableStateOf("") }; var ay by remember { mutableStateOf("") }; var az by remember { mutableStateOf("") }
-    var bx by remember { mutableStateOf("") }; var by_ by remember { mutableStateOf("") }; var bz by remember { mutableStateOf("") }
-    var dualAnt by remember { mutableStateOf(false) }
-    var ux by remember { mutableStateOf("0") }; var uy by remember { mutableStateOf("0") }; var uz by remember { mutableStateOf("0") }
-    var profile by remember { mutableStateOf("LAND") }
-    var align by remember { mutableStateOf("AUTOMATIC") }
+    var ax by remember(rxc) { mutableStateOf(rxc.ant1?.first ?: "") }
+    var ay by remember(rxc) { mutableStateOf(rxc.ant1?.second ?: "") }
+    var az by remember(rxc) { mutableStateOf(rxc.ant1?.third ?: "") }
+    var bx by remember(rxc) { mutableStateOf(rxc.ant2?.first ?: "") }
+    var by_ by remember(rxc) { mutableStateOf(rxc.ant2?.second ?: "") }
+    var bz by remember(rxc) { mutableStateOf(rxc.ant2?.third ?: "") }
+    var dualAnt by remember(rxc) { mutableStateOf(rxc.ant2 != null) }
+    var ux by remember(rxc) { mutableStateOf(rxc.user?.first ?: "0") }
+    var uy by remember(rxc) { mutableStateOf(rxc.user?.second ?: "0") }
+    var uz by remember(rxc) { mutableStateOf(rxc.user?.third ?: "0") }
+    var profile by remember(rxc) { mutableStateOf(rxc.insProfile.ifBlank { "LAND" }) }
+    var align by remember(rxc) { mutableStateOf(rxc.alignMode.ifBlank { "AUTOMATIC" }) }
 
     Card { Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Text("Axis alignment (RBV)", style = MaterialTheme.typography.titleSmall)
